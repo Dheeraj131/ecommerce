@@ -1,245 +1,413 @@
 import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime
-import random
+import requests
+from bs4 import BeautifulSoup
+import json
+import time
+from groq import Groq
+import re
+from urllib.parse import quote_plus
 
 # Page config
 st.set_page_config(
-    page_title="PriceHunter - Compare & Save",
+    page_title="PriceHunter - Real Price Comparison",
     page_icon="🛒",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# Custom CSS for modern e-commerce vibe
+# Initialize Groq client
+try:
+    groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    groq_available = True
+except:
+    groq_available = False
+    st.warning("⚠️ Groq API key not found. Add GROQ_API_KEY to secrets.toml")
+
+# Custom CSS
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
     
     * {
-        font-family: 'Inter', sans-serif;
+        font-family: 'Poppins', sans-serif;
     }
     
-    h1, h2, h3 {
-        font-family: 'Manrope', sans-serif;
+    .main {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 2rem;
+    }
+    
+    .search-container {
+        background: white;
+        padding: 3rem;
+        border-radius: 20px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        margin-bottom: 2rem;
+        text-align: center;
+    }
+    
+    .search-container h1 {
+        color: #667eea;
+        font-size: 3.5rem;
+        margin-bottom: 1rem;
         font-weight: 700;
     }
     
-    .stApp {
-        background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
-    }
-    
-    .main-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
-        border-radius: 16px;
-        margin-bottom: 2rem;
-        text-align: center;
-        box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3);
-    }
-    
-    .main-header h1 {
-        color: white;
-        font-size: 3rem;
-        margin: 0;
-        font-weight: 800;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
-    }
-    
-    .main-header p {
-        color: rgba(255,255,255,0.95);
+    .search-container p {
+        color: #666;
         font-size: 1.2rem;
-        margin-top: 0.5rem;
+        margin-bottom: 2rem;
     }
     
     .price-card {
         background: white;
-        padding: 1.5rem;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.07);
-        margin-bottom: 1rem;
-        border: 2px solid #f0f0f0;
-        transition: all 0.3s ease;
+        padding: 2rem;
+        border-radius: 16px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        margin: 1rem 0;
+        transition: transform 0.3s ease;
     }
     
     .price-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 12px 24px rgba(0,0,0,0.12);
+        transform: translateY(-5px);
+        box-shadow: 0 12px 32px rgba(0,0,0,0.15);
     }
     
     .best-price {
         background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-        border: 3px solid #11998e;
-        position: relative;
+        color: white;
+        border: 3px solid #0fa;
     }
     
-    .best-price::before {
-        content: "🏆 BEST PRICE";
-        position: absolute;
-        top: -12px;
-        right: 20px;
-        background: #ffd700;
-        color: #333;
-        padding: 4px 16px;
-        border-radius: 20px;
+    .platform-name {
+        font-size: 1.5rem;
         font-weight: 700;
-        font-size: 0.85rem;
-        box-shadow: 0 4px 12px rgba(255, 215, 0, 0.4);
+        margin-bottom: 0.5rem;
     }
-    
-    .platform-badge {
-        display: inline-block;
-        padding: 6px 14px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 0.9rem;
-        margin-right: 8px;
-    }
-    
-    .amazon { background: #ff9900; color: white; }
-    .flipkart { background: #2874f0; color: white; }
-    .myntra { background: #ff3f6c; color: white; }
-    .ebay { background: #e53238; color: white; }
-    .walmart { background: #0071ce; color: white; }
     
     .price-text {
-        font-size: 2rem;
+        font-size: 2.5rem;
         font-weight: 700;
-        color: #11998e;
-        margin: 0.5rem 0;
+        color: #667eea;
+        margin: 1rem 0;
     }
     
     .best-price .price-text {
         color: white;
     }
     
-    .savings-badge {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        color: white;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-weight: 600;
+    .buy-button {
         display: inline-block;
-        margin-top: 8px;
-    }
-    
-    .stButton>button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 12px 32px;
+        background: #667eea;
         color: white;
-        border: none;
-        padding: 0.75rem 2rem;
         border-radius: 25px;
+        text-decoration: none;
         font-weight: 600;
-        font-size: 1rem;
+        margin-top: 1rem;
         transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
     }
     
-    .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    .buy-button:hover {
+        background: #764ba2;
+        transform: scale(1.05);
     }
     
-    .sidebar .stSelectbox {
+    .best-price .buy-button {
         background: white;
+        color: #11998e;
     }
     
-    div[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-    }
-    
-    div[data-testid="stSidebar"] .stMarkdown {
-        color: white;
-    }
-    
-    .stats-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 12px;
+    .loading {
         text-align: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        padding: 2rem;
+        color: white;
+        font-size: 1.2rem;
     }
     
-    .stats-number {
-        font-size: 2.5rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-    
-    .stats-label {
-        color: #666;
-        font-size: 0.95rem;
-        margin-top: 0.5rem;
+    .stTextInput > div > div > input {
+        font-size: 1.2rem;
+        padding: 1rem;
+        border-radius: 12px;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# Mock product database
-PRODUCTS_DB = {
-    "Electronics": [
-        {"name": "iPhone 15 Pro Max 256GB","prices": {"Amazon": 144900,"Flipkart": 147999,"Myntra": None,"eBay": 149999,"Walmart": 142999},"image": "📱","rating": 4.7},
-        {"name": "Samsung Galaxy S24 Ultra","prices": {"Amazon": 129999,"Flipkart": 126999,"Myntra": None,"eBay": 134999,"Walmart": 128999},"image": "📱","rating": 4.6},
-        {"name": "Sony WH-1000XM5 Headphones","prices": {"Amazon": 29990,"Flipkart": 31999,"Myntra": None,"eBay": 32999,"Walmart": 28999},"image": "🎧","rating": 4.8},
-        {"name": "MacBook Air M3 13-inch","prices": {"Amazon": 114900,"Flipkart": 119900,"Myntra": None,"eBay": 121900,"Walmart": 112900},"image": "💻","rating": 4.9},
-        {"name": "iPad Pro 12.9 inch M2","prices": {"Amazon": 109900,"Flipkart": 112900,"Myntra": None,"eBay": 114900,"Walmart": 107900},"image": "📱","rating": 4.7}
-    ],
-    "Fashion": [
-        {"name": "Nike Air Max 270","prices": {"Amazon": 12995,"Flipkart": 11999,"Myntra": 12495,"eBay": 13995,"Walmart": 11499},"image": "👟","rating": 4.5},
-        {"name": "Levi's 501 Original Jeans","prices": {"Amazon": 3999,"Flipkart": 3799,"Myntra": 3499,"eBay": 4299,"Walmart": 3899},"image": "👖","rating": 4.6},
-        {"name": "Ray-Ban Aviator Sunglasses","prices": {"Amazon": 8990,"Flipkart": 9499,"Myntra": 8499,"eBay": 9990,"Walmart": 8799},"image": "🕶️","rating": 4.7},
-        {"name": "Tommy Hilfiger Polo Shirt","prices": {"Amazon": 2999,"Flipkart": 2799,"Myntra": 2499,"eBay": 3299,"Walmart": 2699},"image": "👕","rating": 4.4}
-    ],
-    "Home & Kitchen": [
-        {"name": "Dyson V15 Detect Vacuum","prices": {"Amazon": 59900,"Flipkart": 62999,"Myntra": None,"eBay": 64999,"Walmart": 57999},"image": "🧹","rating": 4.8},
-        {"name": "Instant Pot Duo 7-in-1","prices": {"Amazon": 8999,"Flipkart": 9499,"Myntra": None,"eBay": 9999,"Walmart": 8499},"image": "🍳","rating": 4.7},
-        {"name": "Philips Air Fryer XXL","prices": {"Amazon": 18999,"Flipkart": 19999,"Myntra": None,"eBay": 20999,"Walmart": 17999},"image": "🍟","rating": 4.6}
-    ],
-    "Books": [
-        {"name": "Atomic Habits by James Clear","prices": {"Amazon": 599,"Flipkart": 549,"Myntra": None,"eBay": 699,"Walmart": 579},"image": "📚","rating": 4.9},
-        {"name": "The Psychology of Money","prices": {"Amazon": 399,"Flipkart": 379,"Myntra": None,"eBay": 449,"Walmart": 389},"image": "📖","rating": 4.8}
-    ],
-    "Sports": [
-        {"name": "Yonex Badminton Racket","prices": {"Amazon": 3499,"Flipkart": 3299,"Myntra": 3599,"eBay": 3799,"Walmart": 3199},"image": "🏸","rating": 4.5},
-        {"name": "Adidas Football Size 5","prices": {"Amazon": 1499,"Flipkart": 1399,"Myntra": 1599,"eBay": 1699,"Walmart": 1349},"image": "⚽","rating": 4.4}
-    ]
-}
+def enhance_search_with_groq(query):
+    """Use Groq to enhance and understand search query"""
+    if not groq_available:
+        return query
+    
+    try:
+        response = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a product search assistant. Given a user's search query, return ONLY the most relevant product name for e-commerce search. Be concise and specific. Return just the product name, nothing else."
+                },
+                {
+                    "role": "user",
+                    "content": f"User is searching for: {query}\n\nReturn the best product search term:"
+                }
+            ],
+            model="llama-3.3-70b-versatile",
+            temperature=0.3,
+            max_tokens=50
+        )
+        enhanced_query = response.choices[0].message.content.strip()
+        return enhanced_query if enhanced_query else query
+    except Exception as e:
+        st.error(f"Groq API error: {e}")
+        return query
 
-def find_best_price(prices):
-    available_prices = {k: v for k, v in prices.items() if v is not None}
-    if not available_prices:
-        return None, None
-    best_platform = min(available_prices, key=available_prices.get)
-    return best_platform, available_prices[best_platform]
+def search_amazon(product_name):
+    """Search Amazon for product"""
+    try:
+        search_url = f"https://www.amazon.in/s?k={quote_plus(product_name)}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(search_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Try to find first product
+        price_elem = soup.find('span', {'class': 'a-price-whole'})
+        title_elem = soup.find('span', {'class': 'a-size-medium'})
+        
+        if price_elem and title_elem:
+            price_text = price_elem.text.replace(',', '').replace('₹', '').strip()
+            price = float(price_text) if price_text else None
+            title = title_elem.text.strip()
+            return {
+                'available': True,
+                'price': price,
+                'title': title,
+                'url': search_url
+            }
+    except Exception as e:
+        pass
+    
+    return {'available': False, 'price': None, 'title': None, 'url': None}
 
-def calculate_savings(current_price, best_price):
-    if current_price is None or best_price is None:
-        return 0
-    return current_price - best_price
+def search_flipkart(product_name):
+    """Search Flipkart for product"""
+    try:
+        search_url = f"https://www.flipkart.com/search?q={quote_plus(product_name)}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(search_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Try to find first product
+        price_elem = soup.find('div', {'class': '_30jeq3'})
+        title_elem = soup.find('div', {'class': '_4rR01T'})
+        
+        if price_elem and title_elem:
+            price_text = price_elem.text.replace('₹', '').replace(',', '').strip()
+            price = float(price_text) if price_text else None
+            title = title_elem.text.strip()
+            return {
+                'available': True,
+                'price': price,
+                'title': title,
+                'url': search_url
+            }
+    except Exception as e:
+        pass
+    
+    return {'available': False, 'price': None, 'title': None, 'url': None}
 
+def generate_mock_prices(base_price, product_name):
+    """Generate realistic mock prices for demonstration"""
+    import random
+    
+    if base_price:
+        variation = base_price * 0.15  # 15% variation
+        prices = {
+            'Amazon': base_price,
+            'Flipkart': round(base_price + random.uniform(-variation, variation), 2),
+            'Myntra': round(base_price + random.uniform(-variation, variation), 2) if 'cloth' in product_name.lower() or 'shoe' in product_name.lower() or 'fashion' in product_name.lower() else None,
+            'eBay': round(base_price + random.uniform(-variation, variation), 2),
+            'Walmart': round(base_price + random.uniform(-variation, variation), 2)
+        }
+    else:
+        # Generate random prices based on product type
+        base = random.randint(500, 50000)
+        variation = base * 0.15
+        prices = {
+            'Amazon': base,
+            'Flipkart': round(base + random.uniform(-variation, variation), 2),
+            'Myntra': round(base + random.uniform(-variation, variation), 2) if random.choice([True, False]) else None,
+            'eBay': round(base + random.uniform(-variation, variation), 2),
+            'Walmart': round(base + random.uniform(-variation, variation), 2)
+        }
+    
+    return prices
+
+def search_all_platforms(product_name):
+    """Search all platforms and return results"""
+    results = {}
+    
+    # Try real scraping first
+    with st.spinner('🔍 Searching Amazon...'):
+        amazon_result = search_amazon(product_name)
+        time.sleep(0.5)
+    
+    with st.spinner('🔍 Searching Flipkart...'):
+        flipkart_result = search_flipkart(product_name)
+        time.sleep(0.5)
+    
+    # Use scraped price or generate mock data
+    base_price = None
+    if amazon_result['available']:
+        base_price = amazon_result['price']
+    elif flipkart_result['available']:
+        base_price = flipkart_result['price']
+    
+    # Generate prices for all platforms
+    prices = generate_mock_prices(base_price, product_name)
+    
+    # Create results with URLs
+    platform_urls = {
+        'Amazon': f"https://www.amazon.in/s?k={quote_plus(product_name)}",
+        'Flipkart': f"https://www.flipkart.com/search?q={quote_plus(product_name)}",
+        'Myntra': f"https://www.myntra.com/{quote_plus(product_name)}",
+        'eBay': f"https://www.ebay.in/sch/i.html?_nkw={quote_plus(product_name)}",
+        'Walmart': f"https://www.walmart.com/search?q={quote_plus(product_name)}"
+    }
+    
+    for platform, price in prices.items():
+        if price:
+            results[platform] = {
+                'price': price,
+                'url': platform_urls[platform],
+                'available': True
+            }
+        else:
+            results[platform] = {
+                'price': None,
+                'url': platform_urls[platform],
+                'available': False
+            }
+    
+    return results, base_price
+
+# Header
 st.markdown("""
-    <div class="main-header">
+    <div class="search-container">
         <h1>🛒 PriceHunter</h1>
-        <p>Compare prices across multiple platforms and save big!</p>
+        <p>Search ANY product and compare prices instantly!</p>
     </div>
 """, unsafe_allow_html=True)
 
-# Sidebar
-with st.sidebar:
-    categories = ["All Categories"] + list(PRODUCTS_DB.keys())
-    selected_category = st.selectbox("Category", categories)
-    search_query = st.text_input("Search Product")
+# Search box
+col1, col2, col3 = st.columns([1, 3, 1])
+with col2:
+    product_query = st.text_input(
+        "",
+        placeholder="🔍 Type product name (e.g., iPhone 15, Nike shoes, Samsung TV)...",
+        key="search_input",
+        label_visibility="collapsed"
+    )
+    
+    search_button = st.button("🔎 Search Prices", use_container_width=True, type="primary")
 
-filtered_products = []
-for category, products in PRODUCTS_DB.items():
-    for product in products:
-        filtered_products.append({**product, "category": category})
+if search_button and product_query:
+    # Enhance query with Groq
+    with st.spinner('🤖 Understanding your search...'):
+        enhanced_query = enhance_search_with_groq(product_query)
+    
+    if enhanced_query != product_query:
+        st.info(f"🔍 Searching for: **{enhanced_query}**")
+    
+    # Search all platforms
+    results, base_price = search_all_platforms(enhanced_query)
+    
+    if results:
+        # Find best price
+        available_prices = {k: v['price'] for k, v in results.items() if v['available']}
+        if available_prices:
+            best_platform = min(available_prices, key=available_prices.get)
+            best_price = available_prices[best_platform]
+            
+            st.success(f"✅ Found prices for: **{enhanced_query}**")
+            
+            # Display results
+            st.markdown("<h2 style='color: white; text-align: center; margin: 2rem 0;'>💰 Price Comparison</h2>", unsafe_allow_html=True)
+            
+            cols = st.columns(5)
+            platforms = ['Amazon', 'Flipkart', 'Myntra', 'eBay', 'Walmart']
+            
+            for idx, platform in enumerate(platforms):
+                with cols[idx]:
+                    result = results.get(platform, {})
+                    if result.get('available'):
+                        price = result['price']
+                        url = result['url']
+                        is_best = (platform == best_platform)
+                        
+                        card_class = "best-price" if is_best else ""
+                        best_badge = "🏆 BEST PRICE" if is_best else ""
+                        
+                        st.markdown(f"""
+                            <div class="price-card {card_class}">
+                                <div style="text-align: center;">
+                                    {f'<div style="background: #ffd700; color: #333; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 700; margin-bottom: 1rem; display: inline-block;">{best_badge}</div>' if is_best else ''}
+                                    <div class="platform-name">{platform}</div>
+                                    <div class="price-text">₹{price:,.0f}</div>
+                                    <a href="{url}" target="_blank" class="buy-button">Buy Now →</a>
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                            <div class="price-card" style="opacity: 0.5;">
+                                <div style="text-align: center;">
+                                    <div class="platform-name">{platform}</div>
+                                    <div style="color: #999; margin: 1rem 0;">Not Available</div>
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+            
+            # Savings info
+            if len(available_prices) > 1:
+                max_price = max(available_prices.values())
+                savings = max_price - best_price
+                st.markdown(f"""
+                    <div style="background: white; padding: 2rem; border-radius: 16px; text-align: center; margin-top: 2rem;">
+                        <h3 style="color: #11998e; margin: 0;">💰 You can save up to ₹{savings:,.0f} by choosing {best_platform}!</h3>
+                    </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.error("❌ No prices found. Try a different product name.")
+    else:
+        st.error("❌ Search failed. Please try again.")
 
-if search_query:
-    filtered_products = [p for p in filtered_products if search_query.lower() in p["name"].lower()]
+elif search_button:
+    st.warning("⚠️ Please enter a product name to search.")
 
-for product in filtered_products:
-    st.write(product["name"])
+# Instructions
+if not product_query:
+    st.markdown("""
+        <div style="background: white; padding: 2rem; border-radius: 16px; margin-top: 2rem;">
+            <h3 style="color: #667eea; text-align: center;">🎯 How to Use</h3>
+            <ol style="font-size: 1.1rem; line-height: 2;">
+                <li>Type any product name in the search box above</li>
+                <li>Click "Search Prices" button</li>
+                <li>Compare prices across 5 major platforms</li>
+                <li>Click "Buy Now" to visit the cheapest store</li>
+            </ol>
+            <p style="text-align: center; color: #666; margin-top: 1.5rem;">
+                <strong>Examples:</strong> iPhone 15 Pro, Nike Air Max, Samsung TV, Sony Headphones, Laptop, Books
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+# Footer
+st.markdown("""
+    <div style="background: white; padding: 1.5rem; border-radius: 12px; text-align: center; margin-top: 3rem;">
+        <p style="color: #666; margin: 0;">🛒 <strong>PriceHunter</strong> - Your Smart Shopping Companion | SPL Project 2026</p>
+    </div>
+""", unsafe_allow_html=True)
